@@ -1,0 +1,301 @@
+version: '3.0'
+
+services:
+  ########################
+  ### InterSCity Services
+  ########################
+
+  interscity-mongo:
+    container_name: interscity-mongo
+    image: 'mongo:3.4'
+    environment:
+      AUTH: 'no'
+    ports:
+      - "27017:27017"
+
+  interscity-kong:
+    image: kong:0.11.2
+    container_name: interscity-kong
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=interscity-postgres
+      - LC_CTYPE=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+      - KONG_PG_USER=postgres
+      - KONG_PG_PASSWORD=admin
+    restart: always
+    command: bash -c "kong migrations up && kong start"
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8443:8443"
+      - "7946:7946"
+      - "7946:7946/udp"
+    depends_on:
+      - interscity-postgres
+    links:
+      - interscity-postgres
+
+  interscity-rabbitmq:
+    container_name: interscity-rabbitmq
+    image: rabbitmq:3.6.5
+    command: bash -c "rabbitmq-server"
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:15672"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  interscity-postgres:
+    container_name: interscity-postgres
+    image: 'postgres:9.4'
+    environment:
+      POSTGRES_USER: 'postgres'
+      POSTGRES_PASSWORD: 'admin'
+    volumes:
+      - "db-data-kong-postgres:/var/lib/postgresql/data"
+
+  interscity-redis:
+    image: 'redis'
+    container_name: interscity-redis
+
+  interscity-mongo-cache:
+    container_name: interscity-mongo-cache
+    image: 'percona/percona-server-mongodb:latest'
+    user: 'root'
+    environment:
+      AUTH: 'no'
+    command: bash -c "chmod -R go+w /data/db && mongod --storageEngine inMemory"
+
+  interscity-spark-master:
+    image: 'gettyimages/spark:latest'
+    command: /scripts/spark_master
+    container_name: "interscity-spark-master"
+    hostname: interscity-spark-master
+    environment:
+      MASTER: spark://interscity-spark-master:7077
+      SPARK_CONF_DIR: /conf
+      SPARK_PUBLIC_DNS: localhost
+      PYSPARK_DRIVER_PYTHON: "ipython"
+    expose:
+      - 7001
+      - 7002
+      - 7003
+      - 7004
+      - 7005
+      - 7006
+      - 7077
+      - 6066
+    ports:
+      - 4040:4040
+      - 6066:6066
+      - 7077:7077
+      - 9999:9999
+      - 18080:18080
+      - 8080:8080
+    volumes:
+      - ./data-processor/conf/master:/conf
+      - ./data:/tmp/data
+      - ./data-processor/spark_jobs:/jobs
+      - ./data-processor/scripts:/scripts
+
+  interscity-spark-worker:
+    image: "gettyimages/spark:latest"
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://interscity-spark-master:7077
+    hostname: interscity-spark-worker
+    container_name: "interscity-spark-worker"
+    environment:
+      SPARK_CONF_DIR: /conf
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_WORKER_PORT: 8881
+      SPARK_WORKER_WEBUI_PORT: 8081
+      SPARK_PUBLIC_DNS: localhost
+    links:
+      - interscity-spark-master
+    expose:
+      - 7012
+      - 7013
+      - 7014
+      - 7015
+      - 7016
+      - 8881
+    ports:
+      - 8081:8081
+    volumes:
+      - ./data-processor/conf/worker:/conf
+      - ./data:/tmp/data
+
+  interscity-kafka:
+    container_name: interscity-kafka
+    image: 'spotify/kafka'
+    ports:
+      - 9092:9092
+      - 2181:2181
+    environment:
+      ADVERTISED_HOST: 172.17.0.1
+
+  hadoop:
+    container_name: "hadoop"
+    container_name: "interscity-hadoop"
+    image: sequenceiq/hadoop-docker
+    ports:
+      - "8020:8020"
+      - "50070:50070"
+      - "50010:50010"
+      - "9000:9000"
+
+
+
+  #############################
+  ### InterSCity Microsservices
+  #############################
+
+  interscity-resource-adaptor:
+    container_name: interscity-resource-adaptor
+    depends_on:
+      - 'interscity-postgres'
+      - 'interscity-kong'
+      - 'interscity-rabbitmq'
+    build: 'resource-adaptor/.'
+    ports:
+      - 3002:3000
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      POSTGRES_USER: 'postgres'
+      POSTGRES_PASSWORD: 'admin'
+      POSTGRES_HOST: 'interscity-postgres'
+      POSTGRES_PORT: 5432
+      CATALOGUER_HOST: 'interscity-resource-cataloguer:3000'
+      ADAPTOR_HOST: 'interscity-resource-adaptor:3000'
+      RABBITMQ_HOST: 'interscity-rabbitmq'
+      KONG_URI: 'http://interscity-kong:8001'
+      SELF_HOST: 'interscity-resource-adaptor:3000'
+      REGISTER_METHOD: 'target'
+
+  interscity-actuator-controller:
+    container_name: interscity-actuator-controller
+    depends_on:
+      - 'interscity-mongo'
+      - 'interscity-mongo-cache'
+      - 'interscity-rabbitmq'
+      - 'interscity-kong'
+    build: 'actuator-controller/.'
+    ports:
+      - 5000:3000
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      MONGO_USER: 'admin'
+      MONGO_PASSWORD: 'admin'
+      MONGO_HOST: 'interscity-mongo'
+      MONGO_PORT: 27017
+      MONGO_CACHE_HOST: 'interscity-mongo-cache'
+      MONGO_CACHE_PORT: 27017
+      RABBITMQ_HOST: 'interscity-rabbitmq'
+      KONG_URI: 'http://interscity-kong:8001'
+      SELF_HOST: 'interscity-actuator-controller:3000'
+      REGISTER_METHOD: 'target'
+
+  interscity-resource-cataloguer:
+    container_name: interscity-resource-cataloguer
+    build: 'resource-cataloguer/.'
+    depends_on:
+      - 'interscity-postgres'
+      - 'interscity-redis'
+      - 'interscity-rabbitmq'
+      - 'interscity-kong'
+    ports:
+      - 3000:3000
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      POSTGRES_USER: 'postgres'
+      POSTGRES_PASSWORD: 'admin'
+      POSTGRES_HOST: 'interscity-postgres'
+      POSTGRES_PORT: 5432
+      DATACOLLECTOR_HOST: 'interscity-data-collector:3000'
+      ACTUATORCONTROLLER_HOST: 'interscity-actuator-controller:3000'
+      RABBITMQ_HOST: 'interscity-rabbitmq'
+      KONG_URI: 'http://interscity-kong:8001'
+      SELF_HOST: 'interscity-resource-cataloguer:3000'
+      REGISTER_METHOD: 'target'
+      REDIS_HOST: 'interscity-redis'
+      REDIS_PORT: 6379
+
+  interscity-resource-discoverer:
+    container_name: interscity-resource-discoverer
+    depends_on:
+      - 'interscity-redis'
+      - 'interscity-rabbitmq'
+      - 'interscity-kong'
+    build: 'resource-discoverer/.'
+    ports:
+      - 3004:3000
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      REDIS_HOST: 'interscity-redis:6379'
+      DATACOLLECTOR_HOST: 'interscity-data-collector:3000'
+      CATALOGUER_HOST: 'interscity-resource-cataloguer:3000'
+      RABBITMQ_HOST: 'interscity-rabbitmq'
+      KONG_URI: 'http://interscity-kong:8001'
+      SELF_HOST: 'interscity-resource-discoverer:3000'
+      REGISTER_METHOD: 'target'
+
+  interscity-data-collector:
+    container_name: interscity-data-collector
+    depends_on:
+      - 'interscity-mongo'
+      - 'interscity-mongo-cache'
+      - 'interscity-rabbitmq'
+      - 'interscity-kong'
+    build: 'data-collector/.'
+    ports:
+      - 4000:3000
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      MONGO_USER: 'admin'
+      MONGO_PASSWORD: 'admin'
+      MONGO_HOST: 'interscity-mongo'
+      MONGO_PORT: 27017
+      MONGO_CACHE_HOST: 'interscity-mongo-cache'
+      MONGO_CACHE_PORT: 27017
+      RABBITMQ_HOST: 'interscity-rabbitmq'
+      KONG_URI: 'http://interscity-kong:8001'
+      SELF_HOST: 'interscity-data-collector:3000'
+      REGISTER_METHOD: 'target'
+
+  interscity-data-processor:
+    container_name: interscity-data-processor
+    build: 'data-processor/.'
+    command: bash -c "mix deps.get && mix ecto.setup && mix phx.server"
+    ports:
+      - 4545:4545
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data-processor/assets:/opt/app/assets
+      - ./data-processor/config:/opt/app/config
+      - ./data-processor/lib:/opt/app/lib
+      - ./data-processor/scripts:/opt/app/scripts
+      - ./data-processor/test:/opt/app/test
+      - ./data-processor/spark_jobs:/opt/app/spark_jobs
+      - ./data-processor/mix.exs:/opt/app/mix.exs
+      - ./data-processor/mix.lock:/opt/app/mix.lock
+      - ./data-processor/coveralls.json:/opt/app/coveralls.json
+      - ./data-processor/.git:/opt/app/.git
+    environment:
+      DB_HOST: 'interscity-postgres'
+      TEST_DB: 'interscity-postgres'
+      DB_PORT: 5432
+      DB_USERNAME: 'postgres'
+      DB_PASSWORD: 'admin'
+
+
+networks:
+  default:
+    external:
+      name: platform
+
+volumes:
+  db-data-kong-postgres:

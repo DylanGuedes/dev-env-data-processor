@@ -50,43 +50,20 @@ if [ "$1" = "pull" ]; then
 fi
 
 if [ "$1" = "setup" ]; then
-  for d in "${projects[@]}"; do
-    if [ "$d" != 'zPOO/' ]; then
-      echo "$sep"
-      printf "Starting $d :"
-      cd $localPATH/$d
-      printf "${CYAN}"
-      ./scripts/setup
-      printf "${NC}"
-    fi
-  done
+  # docker network create platform
+  echo "Running migrations"
+  docker exec -it interscity-resource-adaptor sh -c "rake db:setup"
+  docker exec -it interscity-actuator-controller sh -c "rake db:setup"
+  docker exec -it interscity-resource-cataloguer sh -c "rake db:setup"
+  docker exec -it interscity-data-collector sh -c "rake db:setup"
 fi
 
 if [ "$1" = "start" ]; then
-  for d in "${projects[@]}"; do
-    if [ "$d" != 'zPOO/' ]; then
-      echo "$sep"
-      echo "Starting $d :"
-      cd $localPATH/$d
-      ./scripts/development stop > /dev/null
-      printf "${CYAN}"
-      echo $(./scripts/development start)
-      printf "${NC}"
-    fi
-  done
+  docker-compose up -d
 fi
 
 if [ "$1" = "stop" ]; then
-  for d in "${projects[@]}"; do
-    if [ "$d" != 'zPOO/' ]; then
-      echo "$sep"
-      echo "Stopping $d :"
-      cd $localPATH/$d
-      printf "${CYAN}"
-      echo $(./scripts/development stop)
-      printf "${NC}"
-    fi
-  done
+  docker-compose stop
 fi
 
 if [ "$1" = "test" ]; then

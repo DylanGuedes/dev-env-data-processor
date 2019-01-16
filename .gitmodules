@@ -19,3 +19,6 @@
 [submodule "kong-api-gateway"]
 	path = kong-api-gateway
 	url = https://gitlab.com/smart-city-software-platform/kong-api-gateway.git
+[submodule "data_processor"]
+	path = data-processor
+	url = https://github.com/dylanguedes/data_processor

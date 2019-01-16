@@ -2,7 +2,7 @@
 
 This repository is composed of the scripts required to run all InterSCity's
 microservices on the development environment. 
-This project was tested in a GNU Linux Debian 8 and 9
+This project was tested in a GNU Linux Fedora 28 and 29
 environments.
 
 ## Dependencies
@@ -18,7 +18,9 @@ environments.
   `git submodule init`
 * Update submodules:
   `git submodule update`
-* Setup docker containers:
+* Run docker containers:
+  `./project start`
+* Setup containers:
   `./project setup`
 
 ## Run the Development Environment
